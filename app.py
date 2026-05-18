@@ -9,17 +9,26 @@ from PIL import Image
 import streamlit.components.v1 as components
 import urllib.parse  # Para crear enlaces de WhatsApp válidos en la nube
 
+# --- NUEVAS LIBRERÍAS PARA EL MAPA ESTILO GOOGLE MAPS ---
+try:
+    import folium
+    from streamlit_folium import st_folium
+    FOLIUM_AVAILABLE = True
+except Exception:
+    FOLIUM_AVAILABLE = False
+
 # Intentamos importar pywhatkit de forma segura
 try:
     import pywhatkit as kit
     PYWHATKIT_AVAILABLE = True
-except Exception as e:
+except Exception:
     PYWHATKIT_AVAILABLE = False
 
 # --- 1. CONFIGURACIÓN DE SEGURIDAD ---
 Image.MAX_IMAGE_PIXELS = None 
 st.set_page_config(page_title="Sistema Integra Sonora", layout="wide", page_icon="🗳️")
 
+# Colores oficiales para identificar los distritos de Hermosillo
 COLORES_DISTRITOS = {
     "1": "#FF4B4B", "2": "#1C83E1", "3": "#00C49A", "4": "#FCA311", "5": "#9B5DE5",
     "6": "#00F5D4", "7": "#FFEE32", "8": "#00BBF9", "9": "#F15BB5", "10": "#0077B6",
@@ -28,44 +37,36 @@ COLORES_DISTRITOS = {
     "21": "#540B0E", "POR_ASIGNAR": "#6D6D6D"
 }
 
-# --- 2. CARGA DEL CATÁLOGO (VERSIÓN OPTIMIZADA) ---
+# Coordenadas por defecto del centro de Hermosillo
+LAT_HERMOSILLO = 29.0729
+LON_HERMOSILLO = -110.9559
+
+# --- 2. CARGA DEL CATÁLOGO ---
 @st.cache_data
 def cargar_catalogo_seguro():
     archivo = "catalogo_sonora.csv"
     if os.path.exists(archivo):
         try:
-            # Intentamos leer con detección automática de separador y codificaciones comunes
             try:
                 df = pd.read_csv(archivo, sep=None, engine='python', encoding='utf-8', on_bad_lines='skip')
             except:
                 df = pd.read_csv(archivo, sep=None, engine='python', encoding='latin1', on_bad_lines='skip')
             
-            # Limpiamos los nombres de las columnas para quitar espacios y poner todo en mayúsculas
             df.columns = df.columns.str.strip().str.upper()
-            
-            # Buscamos de forma más agresiva cualquier columna que se parezca a SECCION o DISTRITO
-            col_seccion = None
-            col_distrito = None
+            col_sec, col_dto = None, None
             
             for col in df.columns:
-                if any(x in col for x in ['SEC', 'SECC', 'SECCION', 'SECCIÓN', 'NUM_SEC']):
-                    col_seccion = col
-                if any(x in col for x in ['DTO', 'DIST', 'DISTRITO', 'LOCAL']):
-                    col_distrito = col
+                if any(x in col for x in ['SEC', 'SECC', 'SECCION', 'SECCIÓN', 'NUM_SEC']): col_sec = col
+                if any(x in col for x in ['DTO', 'DIST', 'DISTRITO', 'LOCAL']): col_dto = col
 
-            if col_seccion and col_distrito:
-                df[col_seccion] = df[col_seccion].astype(str).str.replace('.0', '', regex=False).str.strip()
-                return df, col_seccion, col_distrito
+            if col_sec and col_dto:
+                df[col_sec] = df[col_sec].astype(str).str.replace('.0', '', regex=False).str.strip()
+                return df, col_sec, col_dto
             else:
-                # Si las columnas tienen nombres raros, asignamos por posición como plan de respaldo
                 if len(df.columns) >= 2:
-                    columnas_nuevas = list(df.columns)
-                    columnas_nuevas[0] = 'SECCION'
-                    columnas_nuevas[1] = 'DISTRITO'
-                    df.columns = columnas_nuevas
+                    df.columns = ['SECCION', 'DISTRITO'] + list(df.columns[2:])
                     df['SECCION'] = df['SECCION'].astype(str).str.replace('.0', '', regex=False).str.strip()
                     return df, 'SECCION', 'DISTRITO'
-                    
         except Exception as e:
             st.error(f"Error interno al procesar el catálogo: {e}")
     return None, None, None
@@ -87,13 +88,8 @@ tab1, tab2, tab3 = st.tabs(["📝 REGISTRO", "📊 PANEL DE CONTROL", "📢 WHAT
 
 # --- PESTAÑA 1: CAPTURA ---
 with tab1:
-    col_campos, col_leyenda = st.columns([3, 1])
-    with col_leyenda:
-        st.subheader("📌 Distritos")
-        for d, color in COLORES_DISTRITOS.items():
-            if d.isdigit():
-                st.markdown(f'<div style="display:flex;align-items:center;margin-bottom:3px;"><div style="width:12px;height:12px;background:{color};border-radius:50%;margin-right:8px;"></div><span style="font-size:12px; font-weight:500;">Dto {d}</span></div>', unsafe_allow_html=True)
-
+    col_campos, col_mapa_panel = st.columns([2, 2])
+    
     with col_campos:
         nombre = st.text_input("Nombre Completo:").upper()
         direccion = st.text_input("Dirección:")
@@ -102,10 +98,18 @@ with tab1:
         seccion_f = st.number_input("Sección Electoral:", min_value=1, value=390)
         
         dto_final = "POR_ASIGNAR"
+        lat_seccion = LAT_HERMOSILLO
+        lon_seccion = LON_HERMOSILLO
+        
+        # Buscamos el distrito en base a la sección
         if df_cat is not None:
             match = df_cat[df_cat[col_sec] == str(int(seccion_f))]
             if not match.empty:
                 dto_final = str(match.iloc[0][col_dto]).strip().replace('.0', '')
+                # Si el catálogo llega a tener columnas de coordenadas, las toma automáticamente
+                if 'LATITUD' in df_cat.columns and 'LONGITUD' in df_cat.columns:
+                    lat_seccion = float(match.iloc[0]['LATITUD'])
+                    lon_seccion = float(match.iloc[0]['LONGITUD'])
         
         if dto_final == "POR_ASIGNAR" or dto_final not in COLORES_DISTRITOS:
             dto_final = st.selectbox("Distrito Local (No detectado automáticamente):", list(COLORES_DISTRITOS.keys()))
@@ -134,18 +138,35 @@ with tab1:
                     "FECHA": datetime.now().strftime("%d/%m/%Y %H:%M"),
                     "NOMBRE": nombre, "DIRECCION": direccion, "CELULAR": celular,
                     "MUNICIPIO": municipio_f, "SECCION": seccion_f, "DISTRITO": dto_final,
+                    "LATITUD": lat_seccion, "LONGITUD": lon_seccion,
                     "FOTO_PER": path_p, "FOTO_INE": path_i
                 }])
                 nuevo_reg.to_csv(base_file, mode='a', header=not os.path.exists(base_file), index=False)
                 st.success("¡Registro Guardado Exitosamente!")
                 st.balloons()
+                st.rerun()
             else:
                 st.warning("⚠️ Nombre y Celular son campos obligatorios.")
 
-        st.markdown(f'<div style="border: 5px solid {color_res}; border-radius: 12px; overflow: hidden; margin-top:15px;">', unsafe_allow_html=True)
-        url_mapa_libre = f"https://www.openstreetmap.org/export/embed.html?bbox=-111.05%2C29.03%2C-110.90%2C29.15&layer=mapnik"
-        components.iframe(url_mapa_libre, height=400)
-        st.markdown('</div>', unsafe_allow_html=True)
+    # --- PANEL DEL MAPA DINÁMICO (LADO DERECHO) ---
+    with col_mapa_panel:
+        st.subheader("🗺️ Ubicación Georreferenciada")
+        if FOLIUM_AVAILABLE:
+            # Creamos el mapa centrado en la sección actual o en Hermosillo general
+            m = folium.Map(location=[lat_seccion, lon_seccion], zoom_start=14 if lat_seccion != LAT_HERMOSILLO else 12, control_scale=True)
+            
+            # Dibujamos un marcador del ciudadano actual
+            folium.Marker(
+                [lat_seccion, lon_seccion],
+                popup=f"Sección: {seccion_f} - Distrito: {dto_final}",
+                tooltip=f"Sección {seccion_f}",
+                icon=folium.Icon(color="red" if dto_final=="1" else "blue", icon="info-sign")
+            ).add_to(m)
+            
+            # Mostramos el mapa dinámico en la interfaz
+            st_folium(m, width=600, height=500, key="mapa_registro")
+        else:
+            st.info("Configurando componentes del mapa interactivo...")
 
 # --- PESTAÑA 2: PANEL DE CONTROL ---
 with tab2:
@@ -156,6 +177,25 @@ with tab2:
             df_v = pd.read_csv(base_file, on_bad_lines='skip', engine='python')
             if not df_v.empty:
                 st.metric("Total de Ciudadanos en la Base", len(df_v))
+                
+                # --- MAPA GENERAL DE MAPEO MASIVO ---
+                if FOLIUM_AVAILABLE and 'LATITUD' in df_v.columns and 'LONGITUD' in df_v.columns:
+                    st.markdown("### 📌 Distribución Geográfica de Registros")
+                    m_general = folium.Map(location=[LAT_HERMOSILLO, LON_HERMOSILLO], zoom_start=12)
+                    
+                    for _, row in df_v.dropna(subset=['LATITUD', 'LONGITUD']).iterrows():
+                        folium.CircleMarker(
+                            location=[float(row['LATITUD']), float(row['LONGITUD'])],
+                            radius=7,
+                            popup=f"<b>{row['NOMBRE']}</b><br>Distrito: {row['DISTRITO']}<br>Sección: {row['SECCION']}",
+                            color=COLORES_DISTRITOS.get(str(row['DISTRITO']), "#6D6D6D"),
+                            fill=True,
+                            fill_color=COLORES_DISTRITOS.get(str(row['DISTRITO']), "#6D6D6D"),
+                            fill_opacity=0.7
+                        ).add_to(m_general)
+                    
+                    st_folium(m_general, width=1200, height=500, key="mapa_general")
+                
                 st.dataframe(df_v, use_container_width=True)
             else:
                 st.info("No hay datos en el archivo CSV aún.")
@@ -180,21 +220,17 @@ with tab3:
             
             contactos_filtrados = df_w if filtro_dto == "TODOS" else df_w[df_w['DISTRITO'].astype(str) == filtro_dto]
             
-            # --- DETECCIÓN DE ENTORNO NUBE VS LOCAL ---
             if not PYWHATKIT_AVAILABLE or os.environ.get("STREAMLIT_SERVER_COOKIE_SECRET") is not None:
                 st.info("🌐 **Modo Web Activo**: Generando enlaces directos de envío rápido para WhatsApp.")
-                
                 if not contactos_filtrados.empty:
                     for idx, row in contactos_filtrados.reset_index(drop=True).iterrows():
                         num = str(row['CELULAR']).strip().split('.')[0]
-                        if not num.startswith('52'): 
-                            num = '52' + num if not num.startswith('+52') else num.replace('+', '')
+                        if not num.startswith('52'): num = '52' + num if not num.startswith('+52') else num.replace('+', '')
                         else:
                             if num.startswith('+52'): num = num.replace('+', '')
                         
                         msg_personalizado = mensaje_base.replace("{nombre}", str(row['NOMBRE']))
                         texto_url = urllib.parse.quote(msg_personalizado)
-                        
                         url_wa = f"https://api.whatsapp.com/send?phone={num}&text={texto_url}"
                         
                         col_nom, col_btn = st.columns([3, 1])
@@ -202,8 +238,6 @@ with tab3:
                         col_btn.markdown(f'[@ Enviar por WhatsApp]({url_wa})', unsafe_allow_html=True)
                 else:
                     st.warning("No hay contactos para el filtro seleccionado.")
-            
-            # Modo Local (Tu Windows)
             else:
                 st.success("💻 **Modo Local Activo**: Automatización con simulación de mouse disponible.")
                 if st.button("🚀 INICIAR ENVÍO AUTOMÁTICO MASIVO"):
