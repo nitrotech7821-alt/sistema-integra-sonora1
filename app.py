@@ -1,18 +1,20 @@
 import os
-from pyvirtualdisplay import Display
-
-# --- BINDING DE ENTORNO GRÁFICO (Evita KeyError: 'DISPLAY' en la nube) ---
-display = Display(visible=0, size=(1024, 768))
-display.start()
 
 # --- IMPORTS DEL SISTEMA ---
 import streamlit as st
 import pandas as pd
-import pywhatkit as kit
 import time
 from datetime import datetime
 from PIL import Image
 import streamlit.components.v1 as components
+
+# Intentamos importar pywhatkit de forma segura
+try:
+    import pywhatkit as kit
+    PYWHATKIT_AVAILABLE = True
+except Exception as e:
+    PYWHATKIT_AVAILABLE = False
+    print(f"Advertencia: pywhatkit no se pudo cargar en este entorno: {e}")
 
 # --- 1. CONFIGURACIÓN DE SEGURIDAD (Solución DecompressionBombError) ---
 Image.MAX_IMAGE_PIXELS = None 
@@ -44,12 +46,12 @@ def cargar_catalogo_seguro():
             c_dto = [c for c in df.columns if any(x in c for x in ['DTO', 'DIST', 'DISTRITO'])]
             
             if c_sec and c_dto:
-                columna_seccion = c_sec[0]
-                columna_distrito = c_dto[0]
+                col_seccion = c_sec[0]
+                col_distrito = c_dto[0]
                 
                 # Normalizamos secciones a texto limpio
-                df[columna_seccion] = df[columna_seccion].astype(str).str.replace('.0', '', regex=False).str.strip()
-                return df, columna_seccion, columna_distrito
+                df[col_seccion] = df[col_seccion].astype(str).str.replace('.0', '', regex=False).str.strip()
+                return df, col_seccion, col_distrito
         except Exception as e:
             pass
     return None, None, None
@@ -186,29 +188,38 @@ with tab3:
             filtro_dto = c_f1.selectbox("Filtrar envío por Distrito Local:", ["TODOS"] + distritos_disponibles)
             
             if st.button("🚀 INICIAR ENVÍO AUTOMÁTICO"):
-                contactos_filtrados = df_w if filtro_dto == "TODOS" else df_w[df_w['DISTRITO'].astype(str) == filtro_dto]
-                
-                if not contactos_filtrados.empty:
-                    barra_progreso = st.progress(0)
-                    total_envios = len(contactos_filtrados)
-                    
-                    for idx, row in contactos_filtrados.reset_index(drop=True).iterrows():
-                        try:
-                            num = str(row['CELULAR']).strip().split('.')[0]
-                            if not num.startswith('+52'):
-                                num = '+52' + num
-                            
-                            msg_personalizado = mensaje_base.replace("{nombre}", str(row['NOMBRE']))
-                            kit.sendwhatmsg_instantly(num, msg_personalizado, wait_time=12, tab_close=True)
-                            st.write(f"✅ Mensaje enviado con éxito a: {row['NOMBRE']}")
-                            time.sleep(4)
-                        except Exception as err:
-                            st.error(f"❌ Error al enviar a {row['NOMBRE']}: {err}")
-                        
-                        barra_progreso.progress((idx + 1) / total_envios)
-                    st.success("¡Proceso de envío masivo finalizado!")
+                if not PYWHATKIT_AVAILABLE:
+                    st.error("❌ El módulo pywhatkit no está inicializado o cargado correctamente en este entorno.")
                 else:
-                    st.warning("No se encontraron registros activos para el distrito seleccionado.")
+                    contactos_filtrados = df_w if filtro_dto == "TODOS" else df_w[df_w['DISTRITO'].astype(str) == filtro_dto]
+                    
+                    if not contactos_filtrados.empty:
+                        barra_progreso = st.progress(0)
+                        total_envios = len(contactos_filtrados)
+                        
+                        for idx, row in contactos_filtrados.reset_index(drop=True).iterrows():
+                            try:
+                                num = str(row['CELULAR']).strip().split('.')[0]
+                                if not num.startswith('+52'):
+                                    num = '+52' + num
+                                
+                                msg_personalizado = mensaje_base.replace("{nombre}", str(row['NOMBRE']))
+                                
+                                # Info para el usuario en pantalla
+                                st.info(f"Enviando mensaje a {row['NOMBRE']} ({num})... Por favor, no uses el teclado ni el mouse.")
+                                
+                                # Lanzamos la simulación física en tu pantalla
+                                kit.sendwhatmsg_instantly(num, msg_personalizado, wait_time=12, tab_close=True)
+                                
+                                st.write(f"✅ Mensaje enviado con éxito a: {row['NOMBRE']}")
+                                time.sleep(4)
+                            except Exception as err:
+                                st.error(f"❌ Error al enviar a {row['NOMBRE']}: {err}")
+                            
+                            barra_progreso.progress((idx + 1) / total_envios)
+                        st.success("¡Proceso de envío masivo finalizado!")
+                    else:
+                        st.warning("No se encontraron registros activos para el distrito seleccionado.")
         except Exception as e:
             st.error(f"Error en la lectura del módulo de WhatsApp: {e}")
     else:
