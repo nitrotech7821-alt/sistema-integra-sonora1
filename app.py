@@ -28,23 +28,46 @@ COLORES_DISTRITOS = {
     "21": "#540B0E", "POR_ASIGNAR": "#6D6D6D"
 }
 
-# --- 2. CARGA DEL CATÁLOGO ---
+# --- 2. CARGA DEL CATÁLOGO (VERSIÓN OPTIMIZADA) ---
 @st.cache_data
 def cargar_catalogo_seguro():
     archivo = "catalogo_sonora.csv"
     if os.path.exists(archivo):
         try:
-            df = pd.read_csv(archivo, sep=None, engine='python', on_bad_lines='skip', encoding='latin1')
+            # Intentamos leer con detección automática de separador y codificaciones comunes
+            try:
+                df = pd.read_csv(archivo, sep=None, engine='python', encoding='utf-8', on_bad_lines='skip')
+            except:
+                df = pd.read_csv(archivo, sep=None, engine='python', encoding='latin1', on_bad_lines='skip')
+            
+            # Limpiamos los nombres de las columnas para quitar espacios y poner todo en mayúsculas
             df.columns = df.columns.str.strip().str.upper()
-            c_sec = [c for c in df.columns if any(x in c for x in ['SEC', 'SECC', 'SECCIÓN', 'SECCION'])]
-            c_dto = [c for c in df.columns if any(x in c for x in ['DTO', 'DIST', 'DISTRITO'])]
-            if c_sec and c_dto:
-                col_seccion = c_sec[0]
-                col_distrito = c_dto[0]
+            
+            # Buscamos de forma más agresiva cualquier columna que se parezca a SECCION o DISTRITO
+            col_seccion = None
+            col_distrito = None
+            
+            for col in df.columns:
+                if any(x in col for x in ['SEC', 'SECC', 'SECCION', 'SECCIÓN', 'NUM_SEC']):
+                    col_seccion = col
+                if any(x in col for x in ['DTO', 'DIST', 'DISTRITO', 'LOCAL']):
+                    col_distrito = col
+
+            if col_seccion and col_distrito:
                 df[col_seccion] = df[col_seccion].astype(str).str.replace('.0', '', regex=False).str.strip()
                 return df, col_seccion, col_distrito
+            else:
+                # Si las columnas tienen nombres raros, asignamos por posición como plan de respaldo
+                if len(df.columns) >= 2:
+                    columnas_nuevas = list(df.columns)
+                    columnas_nuevas[0] = 'SECCION'
+                    columnas_nuevas[1] = 'DISTRITO'
+                    df.columns = columnas_nuevas
+                    df['SECCION'] = df['SECCION'].astype(str).str.replace('.0', '', regex=False).str.strip()
+                    return df, 'SECCION', 'DISTRITO'
+                    
         except Exception as e:
-            pass
+            st.error(f"Error interno al procesar el catálogo: {e}")
     return None, None, None
 
 df_cat, col_sec, col_dto = cargar_catalogo_seguro()
@@ -158,7 +181,6 @@ with tab3:
             contactos_filtrados = df_w if filtro_dto == "TODOS" else df_w[df_w['DISTRITO'].astype(str) == filtro_dto]
             
             # --- DETECCIÓN DE ENTORNO NUBE VS LOCAL ---
-            # Si el entorno no tiene DISPLAY y falla pywhatkit, activamos modo Nube Inteligente
             if not PYWHATKIT_AVAILABLE or os.environ.get("STREAMLIT_SERVER_COOKIE_SECRET") is not None:
                 st.info("🌐 **Modo Web Activo**: Generando enlaces directos de envío rápido para WhatsApp.")
                 
@@ -173,7 +195,6 @@ with tab3:
                         msg_personalizado = mensaje_base.replace("{nombre}", str(row['NOMBRE']))
                         texto_url = urllib.parse.quote(msg_personalizado)
                         
-                        # Creamos un enlace limpio estilo wa.me
                         url_wa = f"https://api.whatsapp.com/send?phone={num}&text={texto_url}"
                         
                         col_nom, col_btn = st.columns([3, 1])
@@ -182,7 +203,7 @@ with tab3:
                 else:
                     st.warning("No hay contactos para el filtro seleccionado.")
             
-            # Si estás corriendo local en tu Windows, se activa el botón masivo automático antiguo
+            # Modo Local (Tu Windows)
             else:
                 st.success("💻 **Modo Local Activo**: Automatización con simulación de mouse disponible.")
                 if st.button("🚀 INICIAR ENVÍO AUTOMÁTICO MASIVO"):
