@@ -1,23 +1,24 @@
 import os
 from pyvirtualdisplay import Display
 
-# Crea una pantalla virtual invisible para que pyautogui no truene en la nube
+# --- BINDING DE ENTORNO GRÁFICO (Evita KeyError: 'DISPLAY' en la nube) ---
 display = Display(visible=0, size=(1024, 768))
 display.start()
 
-# Ahora sí, continuamos con los imports normales sin duplicados
+# --- IMPORTS DEL SISTEMA ---
 import streamlit as st
-import pywhatkit as kit
 import pandas as pd
+import pywhatkit as kit
 import time
 from datetime import datetime
 from PIL import Image
 import streamlit.components.v1 as components
 
 # --- 1. CONFIGURACIÓN DE SEGURIDAD (Solución DecompressionBombError) ---
-Image.MAX_IMAGE_PIXELS = None
-st.set_page_config(page_title="Sistema Integra Sonora", layout="wide", page_icon="💼")
+Image.MAX_IMAGE_PIXELS = None 
+st.set_page_config(page_title="Sistema Integra Sonora", layout="wide", page_icon="🗳️")
 
+# Mapeo de colores oficiales para los distritos
 COLORES_DISTRITOS = {
     "1": "#FF4B4B", "2": "#1C83E1", "3": "#00C49A", "4": "#FCA311", "5": "#9B5DE5",
     "6": "#00F5D4", "7": "#FFEE32", "8": "#00BBF9", "9": "#F15BB5", "10": "#0077B6",
@@ -25,26 +26,32 @@ COLORES_DISTRITOS = {
     "16": "#005F73", "17": "#AE2012", "18": "#9B2226", "19": "#E09F3E", "20": "#335C67",
     "21": "#540B0E", "POR_ASIGNAR": "#6D6D6D"
 }
+
 # --- 2. CARGA INTELIGENTE Y BLINDADA DEL CATÁLOGO ---
 @st.cache_data
 def cargar_catalogo_seguro():
     archivo = "catalogo_sonora.csv"
     if os.path.exists(archivo):
         try:
+            # Lectura tolerante a codificaciones comunes de Excel en español
             df = pd.read_csv(archivo, sep=None, engine='python', on_bad_lines='skip', encoding='latin1')
+            
+            # Limpiamos encabezados eliminando espacios y forzando mayúsculas
             df.columns = df.columns.str.strip().str.upper()
             
+            # Búsqueda flexible de columnas clave para evitar 'index out of range'
             c_sec = [c for c in df.columns if any(x in c for x in ['SEC', 'SECC', 'SECCIÓN', 'SECCION'])]
             c_dto = [c for c in df.columns if any(x in c for x in ['DTO', 'DIST', 'DISTRITO'])]
             
-            columna_seccion = c_sec[0] if c_sec else df.columns[0]
-            columna_distrito = c_dto[0] if c_dto else df.columns[1]
-            
-            df[columna_seccion] = df[columna_seccion].astype(str).str.replace('.0', '', regex=False).str.strip()
-            return df, columna_seccion, columna_distrito
+            if c_sec and c_dto:
+                columna_seccion = c_sec[0]
+                columna_distrito = c_dto[0]
+                
+                # Normalizamos secciones a texto limpio
+                df[columna_seccion] = df[columna_seccion].astype(str).str.replace('.0', '', regex=False).str.strip()
+                return df, columna_seccion, columna_distrito
         except Exception as e:
-            st.sidebar.error(f"Error procesando columnas del CSV: {e}")
-            return None, None, None
+            pass
     return None, None, None
 
 df_cat, col_sec, col_dto = cargar_catalogo_seguro()
@@ -58,8 +65,7 @@ with st.sidebar:
     if df_cat is not None:
         st.success("✅ Catálogo Sonora Conectado")
     else:
-        st.error("❌ Catálogo no detectado")
-        st.info("Ubica 'catalogo_sonora.csv' en la carpeta SISTEMA PAN VICTOR.")
+        st.warning("⚠️ Catálogo no detectado (Modo Manual)")
 
 # --- 4. CONTROL DE PESTAÑAS ---
 tab1, tab2, tab3 = st.tabs(["📝 REGISTRO", "📊 PANEL DE CONTROL", "📢 WHATSAPP"])
@@ -86,21 +92,35 @@ with tab1:
         municipio_f = st.text_input("Municipio:", value="HERMOSILLO").upper()
         seccion_f = st.number_input("Sección Electoral:", min_value=1, value=390)
         
+        # Búsqueda automatizada de distrito
         dto_final = "POR_ASIGNAR"
         if df_cat is not None:
             match = df_cat[df_cat[col_sec] == str(int(seccion_f))]
             if not match.empty:
                 dto_final = str(match.iloc[0][col_dto]).strip().replace('.0', '')
         
-        color_res = COLORES_DISTRITOS.get(dto_final, "#6D6D6D")
-        st.markdown(f"<div style='background-color:{color_res};padding:12px;border-radius:10px;text-align:center;color:white;font-weight:bold;font-size:22px;margin-bottom:15px;'>DISTRITO DETECTADO: {dto_final}</div>", unsafe_allow_html=True)
+        # Si no se encuentra en el catálogo, permite asignarlo manualmente para no trabar el flujo
+        if dto_final == "POR_ASIGNAR" or dto_final not in COLORES_DISTRITOS:
+            dto_final = st.selectbox("Distrito Local (No detectado automáticamente):", list(COLORES_DISTRITOS.keys()))
         
-        # CORRECCIÓN DEFINITIVA AL FORMULARIO (Evita el TypeError de la captura)
+        color_res = COLORES_DISTRITOS.get(dto_final, "#6D6D6D")
+        st.markdown(
+            f"<div style='background-color:{color_res};padding:12px;border-radius:10px;"
+            f"text-align:center;color:white;font-weight:bold;font-size:22px;margin-bottom:15px;'>"
+            f"DISTRITO DETECTADO: {dto_final}</div>", 
+            unsafe_allow_html=True
+        )
+        
+        # FORMULARIO DE CAPTURA FOTOGRÁFICA
         with st.form("form_captura", clear_on_submit=True):
             st.markdown("### Documentación Fotográfica")
             c1, c2 = st.columns(2)
-            foto_p = c1.camera_input("Capturar Rostro")
-            foto_i = c2.camera_input("Capturar INE")  # Corregido aquí
+            
+            with c1:
+                foto_p = st.camera_input("Capturar Rostro")
+            with c2:
+                foto_i = st.camera_input("Capturar INE")
+                
             btn_guardar = st.form_submit_button("💾 GUARDAR REGISTRO")
 
         if btn_guardar:
@@ -128,15 +148,13 @@ with tab1:
             else:
                 st.warning("⚠️ Nombre y Celular son campos obligatorios.")
 
-        # --- REEMPLAZO DEL MAPA (Solución Segura que no rechaza la conexión) ---
+        # --- MAPA VISUAL INTEGRADO ---
         st.markdown(f'<div style="border: 5px solid {color_res}; border-radius: 12px; overflow: hidden; margin-top:15px;">', unsafe_allow_html=True)
-        direccion_mapa = f"Seccion {seccion_f}, {direccion}, {municipio_f}, Sonora".replace(" ", "+")
-        # Usamos el visor seguro de OpenStreetMap que permite incrustación libre sin bloqueos de origen
-        url_mapa_libre = f"https://www.openstreetmap.org/export/embed.html?bbox=-111.05%2C29.03%2C-110.90%2C29.15&layer=mapnik&marker=29.08%2C-110.97"
+        url_mapa_libre = f"https://www.openstreetmap.org/export/embed.html?bbox=-111.05%2C29.03%2C-110.90%2C29.15&layer=mapnik"
         components.iframe(url_mapa_libre, height=400)
         st.markdown('</div>', unsafe_allow_html=True)
 
-# --- PESTAÑA 2: VISUALIZACIÓN DE LA BASE ---
+# --- PESTAÑA 2: PANEL DE CONTROL ---
 with tab2:
     st.header("📊 Base de Datos General")
     base_file = "BASE_TOTAL_CONTACTOS.csv"
@@ -153,7 +171,7 @@ with tab2:
     else:
         st.warning("Aún no se han generado registros en el sistema.")
 
-# --- PESTAÑA 3: ENVÍO MASIVO WHATSAPP ---
+# --- PESTAÑA 3: MODULO WHATSAPP ---
 with tab3:
     st.header("📢 Módulo de Mensajería Masiva")
     base_file = "BASE_TOTAL_CONTACTOS.csv"
@@ -161,7 +179,7 @@ with tab3:
     if os.path.exists(base_file):
         try:
             df_w = pd.read_csv(base_file, on_bad_lines='skip', engine='python')
-            mensaje_base = st.text_area("Mensaje a enviar (Usa {nombre} para personalizar):", "Hola {nombre}, un saludo de parte del equipo.")
+            mensaje_base = st.text_area("Mensaje a enviar (Usa {nombre} para personalizar):", "Hola {nombre}, un saludo.")
             
             c_f1, c_f2 = st.columns(2)
             distritos_disponibles = sorted([str(x) for x in df_w['DISTRITO'].unique() if pd.notna(x)])
