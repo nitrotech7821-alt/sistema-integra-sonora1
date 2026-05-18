@@ -5,23 +5,19 @@ from pyvirtualdisplay import Display
 display = Display(visible=0, size=(1024, 768))
 display.start()
 
-# Ahora sí puedes continuar con tus imports normales
+# Ahora sí, continuamos con los imports normales sin duplicados
 import streamlit as st
 import pywhatkit as kit
-import streamlit as st
 import pandas as pd
-import os
-import pywhatkit as kit
 import time
 from datetime import datetime
 from PIL import Image
 import streamlit.components.v1 as components
 
 # --- 1. CONFIGURACIÓN DE SEGURIDAD (Solución DecompressionBombError) ---
-Image.MAX_IMAGE_PIXELS = None 
-st.set_page_config(page_title="Sistema Integra Sonora", layout="wide", page_icon="🗳️")
+Image.MAX_IMAGE_PIXELS = None
+st.set_page_config(page_title="Sistema Integra Sonora", layout="wide", page_icon="💼")
 
-# Mapeo de colores oficiales para los distritos
 COLORES_DISTRITOS = {
     "1": "#FF4B4B", "2": "#1C83E1", "3": "#00C49A", "4": "#FCA311", "5": "#9B5DE5",
     "6": "#00F5D4", "7": "#FFEE32", "8": "#00BBF9", "9": "#F15BB5", "10": "#0077B6",
@@ -29,7 +25,6 @@ COLORES_DISTRITOS = {
     "16": "#005F73", "17": "#AE2012", "18": "#9B2226", "19": "#E09F3E", "20": "#335C67",
     "21": "#540B0E", "POR_ASIGNAR": "#6D6D6D"
 }
-
 # --- 2. CARGA INTELIGENTE Y BLINDADA DEL CATÁLOGO ---
 @st.cache_data
 def cargar_catalogo_seguro():
