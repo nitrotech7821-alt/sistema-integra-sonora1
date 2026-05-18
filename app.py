@@ -1,3 +1,13 @@
+import os
+from pyvirtualdisplay import Display
+
+# Crea una pantalla virtual invisible para que pyautogui no truene en la nube
+display = Display(visible=0, size=(1024, 768))
+display.start()
+
+# Ahora sí puedes continuar con tus imports normales
+import streamlit as st
+import pywhatkit as kit
 import streamlit as st
 import pandas as pd
 import os
