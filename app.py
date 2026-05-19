@@ -7,9 +7,9 @@ import time
 from datetime import datetime
 from PIL import Image
 import streamlit.components.v1 as components
-import urllib.parse  # Para crear enlaces de WhatsApp válidos en la nube
+import urllib.parse
 
-# --- NUEVAS LIBRERÍAS PARA EL MAPA ESTILO GOOGLE MAPS ---
+# --- BLINDAGE TOTAL PARA MAPAS ---
 try:
     import folium
     from streamlit_folium import st_folium
@@ -17,18 +17,17 @@ try:
 except Exception:
     FOLIUM_AVAILABLE = False
 
-# Intentamos importar pywhatkit de forma segura
+# --- BLINDAGE TOTAL PARA WHATSAPP ---
 try:
     import pywhatkit as kit
     PYWHATKIT_AVAILABLE = True
 except Exception:
     PYWHATKIT_AVAILABLE = False
 
-# --- 1. CONFIGURACIÓN DE SEGURIDAD ---
+# --- 1. CONFIGURACIÓN ---
 Image.MAX_IMAGE_PIXELS = None 
 st.set_page_config(page_title="Sistema Integra Sonora", layout="wide", page_icon="🗳️")
 
-# Colores oficiales para identificar los distritos de Hermosillo
 COLORES_DISTRITOS = {
     "1": "#FF4B4B", "2": "#1C83E1", "3": "#00C49A", "4": "#FCA311", "5": "#9B5DE5",
     "6": "#00F5D4", "7": "#FFEE32", "8": "#00BBF9", "9": "#F15BB5", "10": "#0077B6",
@@ -37,7 +36,6 @@ COLORES_DISTRITOS = {
     "21": "#540B0E", "POR_ASIGNAR": "#6D6D6D"
 }
 
-# Coordenadas por defecto del centro de Hermosillo
 LAT_HERMOSILLO = 29.0729
 LON_HERMOSILLO = -110.9559
 
@@ -67,8 +65,8 @@ def cargar_catalogo_seguro():
                     df.columns = ['SECCION', 'DISTRITO'] + list(df.columns[2:])
                     df['SECCION'] = df['SECCION'].astype(str).str.replace('.0', '', regex=False).str.strip()
                     return df, 'SECCION', 'DISTRITO'
-        except Exception as e:
-            st.error(f"Error interno al procesar el catálogo: {e}")
+        except Exception:
+            pass
     return None, None, None
 
 df_cat, col_sec, col_dto = cargar_catalogo_seguro()
@@ -83,10 +81,9 @@ with st.sidebar:
     else:
         st.warning("⚠️ Catálogo no detectado")
 
-# --- 4. CONTROL DE PESTAÑAS ---
+# --- 4. PESTAÑAS ---
 tab1, tab2, tab3 = st.tabs(["📝 REGISTRO", "📊 PANEL DE CONTROL", "📢 WHATSAPP"])
 
-# --- PESTAÑA 1: CAPTURA ---
 with tab1:
     col_campos, col_mapa_panel = st.columns([2, 2])
     
@@ -101,15 +98,10 @@ with tab1:
         lat_seccion = LAT_HERMOSILLO
         lon_seccion = LON_HERMOSILLO
         
-        # Buscamos el distrito en base a la sección
         if df_cat is not None:
             match = df_cat[df_cat[col_sec] == str(int(seccion_f))]
             if not match.empty:
                 dto_final = str(match.iloc[0][col_dto]).strip().replace('.0', '')
-                # Si el catálogo llega a tener columnas de coordenadas, las toma automáticamente
-                if 'LATITUD' in df_cat.columns and 'LONGITUD' in df_cat.columns:
-                    lat_seccion = float(match.iloc[0]['LATITUD'])
-                    lon_seccion = float(match.iloc[0]['LONGITUD'])
         
         if dto_final == "POR_ASIGNAR" or dto_final not in COLORES_DISTRITOS:
             dto_final = st.selectbox("Distrito Local (No detectado automáticamente):", list(COLORES_DISTRITOS.keys()))
@@ -145,30 +137,21 @@ with tab1:
                 st.success("¡Registro Guardado Exitosamente!")
                 st.balloons()
                 st.rerun()
-            else:
-                st.warning("⚠️ Nombre y Celular son campos obligatorios.")
 
-    # --- PANEL DEL MAPA DINÁMICO (LADO DERECHO) ---
     with col_mapa_panel:
         st.subheader("🗺️ Ubicación Georreferenciada")
         if FOLIUM_AVAILABLE:
-            # Creamos el mapa centrado en la sección actual o en Hermosillo general
-            m = folium.Map(location=[lat_seccion, lon_seccion], zoom_start=14 if lat_seccion != LAT_HERMOSILLO else 12, control_scale=True)
-            
-            # Dibujamos un marcador del ciudadano actual
-            folium.Marker(
-                [lat_seccion, lon_seccion],
-                popup=f"Sección: {seccion_f} - Distrito: {dto_final}",
-                tooltip=f"Sección {seccion_f}",
-                icon=folium.Icon(color="red" if dto_final=="1" else "blue", icon="info-sign")
-            ).add_to(m)
-            
-            # Mostramos el mapa dinámico en la interfaz
-            st_folium(m, width=600, height=500, key="mapa_registro")
+            try:
+                m = folium.Map(location=[lat_seccion, lon_seccion], zoom_start=13)
+                folium.Marker([lat_seccion, lon_seccion], popup=f"Sección: {seccion_f}").add_to(m)
+                st_folium(m, width=500, height=450, key="mapa_reg_safe")
+            except Exception:
+                st.info("Cargando vista del mapa de respaldo...")
         else:
-            st.info("Configurando componentes del mapa interactivo...")
+            # Mapa estático de respaldo si la nube no tiene folium instalado aún
+            url_mapa_respaldo = f"https://www.openstreetmap.org/export/embed.html?bbox=-111.02%2C29.05%2C-110.92%2C29.12&layer=mapnik"
+            components.iframe(url_mapa_respaldo, height=450)
 
-# --- PESTAÑA 2: PANEL DE CONTROL ---
 with tab2:
     st.header("📊 Base de Datos General")
     base_file = "BASE_TOTAL_CONTACTOS.csv"
@@ -177,88 +160,32 @@ with tab2:
             df_v = pd.read_csv(base_file, on_bad_lines='skip', engine='python')
             if not df_v.empty:
                 st.metric("Total de Ciudadanos en la Base", len(df_v))
-                
-                # --- MAPA GENERAL DE MAPEO MASIVO ---
-                if FOLIUM_AVAILABLE and 'LATITUD' in df_v.columns and 'LONGITUD' in df_v.columns:
-                    st.markdown("### 📌 Distribución Geográfica de Registros")
-                    m_general = folium.Map(location=[LAT_HERMOSILLO, LON_HERMOSILLO], zoom_start=12)
-                    
-                    for _, row in df_v.dropna(subset=['LATITUD', 'LONGITUD']).iterrows():
-                        folium.CircleMarker(
-                            location=[float(row['LATITUD']), float(row['LONGITUD'])],
-                            radius=7,
-                            popup=f"<b>{row['NOMBRE']}</b><br>Distrito: {row['DISTRITO']}<br>Sección: {row['SECCION']}",
-                            color=COLORES_DISTRITOS.get(str(row['DISTRITO']), "#6D6D6D"),
-                            fill=True,
-                            fill_color=COLORES_DISTRITOS.get(str(row['DISTRITO']), "#6D6D6D"),
-                            fill_opacity=0.7
-                        ).add_to(m_general)
-                    
-                    st_folium(m_general, width=1200, height=500, key="mapa_general")
-                
                 st.dataframe(df_v, use_container_width=True)
-            else:
-                st.info("No hay datos en el archivo CSV aún.")
-        except Exception as e:
-            st.error(f"Error al abrir la base de datos: {e}")
-    else:
-        st.warning("Aún no se han generado registros en el sistema.")
+        except Exception:
+            st.error("Esperando nuevos registros...")
 
-# --- PESTAÑA 3: MODULO WHATSAPP ---
 with tab3:
     st.header("📢 Módulo de Mensajería")
     base_file = "BASE_TOTAL_CONTACTOS.csv"
-    
     if os.path.exists(base_file):
         try:
             df_w = pd.read_csv(base_file, on_bad_lines='skip', engine='python')
             mensaje_base = st.text_area("Mensaje a enviar (Usa {nombre} para personalizar):", "Hola {nombre}, un saludo.")
             
-            c_f1, c_f2 = st.columns(2)
             distritos_disponibles = sorted([str(x) for x in df_w['DISTRITO'].unique() if pd.notna(x)])
-            filtro_dto = c_f1.selectbox("Filtrar envío por Distrito Local:", ["TODOS"] + distritos_disponibles)
-            
+            filtro_dto = st.selectbox("Filtrar envío por Distrito Local:", ["TODOS"] + distritos_disponibles)
             contactos_filtrados = df_w if filtro_dto == "TODOS" else df_w[df_w['DISTRITO'].astype(str) == filtro_dto]
             
-            if not PYWHATKIT_AVAILABLE or os.environ.get("STREAMLIT_SERVER_COOKIE_SECRET") is not None:
-                st.info("🌐 **Modo Web Activo**: Generando enlaces directos de envío rápido para WhatsApp.")
-                if not contactos_filtrados.empty:
-                    for idx, row in contactos_filtrados.reset_index(drop=True).iterrows():
-                        num = str(row['CELULAR']).strip().split('.')[0]
-                        if not num.startswith('52'): num = '52' + num if not num.startswith('+52') else num.replace('+', '')
-                        else:
-                            if num.startswith('+52'): num = num.replace('+', '')
-                        
-                        msg_personalizado = mensaje_base.replace("{nombre}", str(row['NOMBRE']))
-                        texto_url = urllib.parse.quote(msg_personalizado)
-                        url_wa = f"https://api.whatsapp.com/send?phone={num}&text={texto_url}"
-                        
-                        col_nom, col_btn = st.columns([3, 1])
-                        col_nom.write(f"👤 **{row['NOMBRE']}** ({row['CELULAR']})")
-                        col_btn.markdown(f'[@ Enviar por WhatsApp]({url_wa})', unsafe_allow_html=True)
-                else:
-                    st.warning("No hay contactos para el filtro seleccionado.")
-            else:
-                st.success("💻 **Modo Local Activo**: Automatización con simulación de mouse disponible.")
-                if st.button("🚀 INICIAR ENVÍO AUTOMÁTICO MASIVO"):
-                    if not contactos_filtrados.empty:
-                        barra_progreso = st.progress(0)
-                        total_envios = len(contactos_filtrados)
-                        for idx, row in contactos_filtrados.reset_index(drop=True).iterrows():
-                            try:
-                                num = str(row['CELULAR']).strip().split('.')[0]
-                                if not num.startswith('+52'): num = '+52' + num
-                                msg_personalizado = mensaje_base.replace("{nombre}", str(row['NOMBRE']))
-                                st.info(f"Enviando de forma automática a {row['NOMBRE']}...")
-                                kit.sendwhatmsg_instantly(num, msg_personalizado, wait_time=12, tab_close=True)
-                                time.sleep(4)
-                            except Exception as err:
-                                st.error(f"❌ Error al enviar a {row['NOMBRE']}: {err}")
-                            barra_progreso.progress((idx + 1) / total_envios)
-                        st.success("¡Envío masivo finalizado!")
-                    else:
-                        st.warning("No se encontraron registros activos.")
-        except Exception as e:
-            st.error(f"Error en el módulo de WhatsApp: {e}")
-    else:
-        st.warning("No hay registros disponibles para realizar envíos.")
+            if not contactos_filtrados.empty:
+                for idx, row in contactos_filtrados.reset_index(drop=True).iterrows():
+                    num = str(row['CELULAR']).strip().split('.')[0]
+                    if not num.startswith('52'): num = '52' + num
+                    msg_personalizado = mensaje_base.replace("{nombre}", str(row['NOMBRE']))
+                    texto_url = urllib.parse.quote(msg_personalizado)
+                    url_wa = f"https://api.whatsapp.com/send?phone={num}&text={texto_url}"
+                    
+                    c_n, c_b = st.columns([3, 1])
+                    c_n.write(f"👤 **{row['NOMBRE']}** ({row['CELULAR']})")
+                    c_b.markdown(f'[@ Enviar por WhatsApp]({url_wa})', unsafe_allow_html=True)
+        except Exception:
+            pass
